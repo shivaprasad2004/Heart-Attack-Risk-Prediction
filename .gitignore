@@ -1,0 +1,36 @@
+# Python / Streamlit project
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Logs and caches
+*.log
+.cache/
+
+# Local data and models
+retina_risk/model.pkl
+data/
+outputs/
+reports/
+
+# Streamlit
+.streamlit/secrets.toml
+
