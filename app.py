@@ -10,6 +10,7 @@ from retina_risk.model import predict_risk, has_trained_model, set_use_trained
 from retina_risk.utils import load_image_bytes, preprocess_image, compute_vesselness, compute_stats, overlay_vesselness
 from retina_risk.train import train_from_uploads, validate_from_uploads
 import requests
+from retina_risk.auth import authenticate_user, register_user, users_exist, ensure_storage, load_session, save_session, clear_session, seed_from_bootstrap_file
  
 # Static assets
 SIDEBAR_IMAGE_URL = "https://images.unsplash.com/photo-1580281657527-47a446a0e6b2?auto=format&fit=crop&w=800&q=60"
@@ -20,6 +21,17 @@ if "page" not in st.session_state:
     st.session_state.page = "home"
 if "use_trained" not in st.session_state:
     st.session_state.use_trained = False
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if not st.session_state.authenticated and st.session_state.page not in ("login", "signup"):
+    st.session_state.page = "login"
+ensure_storage()
+seed_from_bootstrap_file(remove_after=True)
+sess = load_session()
+if sess and int(sess.get("expires", 0)) > int(__import__("time").time()):
+    st.session_state.authenticated = True
+    st.session_state.user = sess.get("user", "")
+    st.session_state.page = "home"
 
 st.markdown(
     """
@@ -95,6 +107,13 @@ if st.session_state.page == "home":
             st.toggle("Use trained model", value=st.session_state.use_trained, key="toggle_use_trained")
             set_use_trained(st.session_state.toggle_use_trained)
             st.session_state.use_trained = st.session_state.toggle_use_trained
+        if st.session_state.authenticated:
+            if st.button("Logout"):
+                st.session_state.authenticated = False
+                st.session_state.user = ""
+                st.session_state.page = "login"
+                clear_session()
+                st.rerun()
 
     st.markdown("<div class='app-banner'><div class='app-title'>🩺 Heart Attack Risk Prediction</div><div class='app-sub'>Upload a retinal fundus image to analyze vasculature and estimate risk</div></div>", unsafe_allow_html=True)
 
@@ -262,6 +281,113 @@ if st.session_state.page == "home":
             st.session_state.page = "framework"
             st.rerun()
 
+elif st.session_state.page == "login":
+    st.markdown(
+        """
+        <style>
+        .stForm {
+          background:#ffffff !important;
+          border:1px solid #e2e8f0 !important;
+          border-radius:14px !important;
+          padding:22px !important;
+          box-shadow:0 6px 24px rgba(0,0,0,0.12) !important;
+        }
+        .login-header {
+          max-width: 420px;
+          margin: 0 auto 12px auto;
+          background:#ffffff;
+          border:1px solid #e2e8f0;
+          border-radius:14px;
+          padding:16px;
+          box-shadow:0 6px 24px rgba(0,0,0,0.12);
+          text-align:left;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <div class="login-header" style="margin-top:24px;">
+          <div style="color:#64748b;font-weight:600;">Please enter your details</div>
+          <div style="font-size:30px;font-weight:800;color:#0b0f19;margin:6px 0 4px;">Welcome back</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.form("login_form", clear_on_submit=False):
+        lu = st.text_input("Email address", placeholder="you@example.com", label_visibility="collapsed")
+        lp = st.text_input("Password", type="password", placeholder="••••••••", label_visibility="collapsed")
+        c1, c2 = st.columns([1,1])
+        with c1:
+            remember = st.checkbox("Remember for 30 days")
+        with c2:
+            forgot = st.form_submit_button("Forgot password")
+        submit = st.form_submit_button("Sign in")
+        if forgot:
+            st.info("Local app: reset by creating a new account or removing storage/users.json")
+        if submit:
+            if authenticate_user(lu, lp):
+                st.session_state.authenticated = True
+                st.session_state.user = lu
+                if remember:
+                    save_session(lu, 30)
+                st.session_state.page = "home"
+                st.rerun()
+            else:
+                st.error("Invalid credentials")
+    st.markdown("<div style='text-align:center;color:#64748b;margin-top:8px;'>Don't have an account?</div>", unsafe_allow_html=True)
+    if st.button("Go to Sign up"):
+        st.session_state.page = "signup"
+        st.rerun()
+elif st.session_state.page == "signup":
+    st.markdown(
+        """
+        <style>
+        .stForm {
+          background:#ffffff !important;
+          border:1px solid #e2e8f0 !important;
+          border-radius:14px !important;
+          padding:22px !important;
+          box-shadow:0 6px 24px rgba(0,0,0,0.12) !important;
+        }
+        .login-header {
+          max-width: 420px;
+          margin: 0 auto 12px auto;
+          background:#ffffff;
+          border:1px solid #e2e8f0;
+          border-radius:14px;
+          padding:16px;
+          box-shadow:0 6px 24px rgba(0,0,0,0.12);
+          text-align:left;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <div class="login-header" style="margin-top:24px;">
+          <div style="color:#64748b;font-weight:600;">Create your account</div>
+          <div style="font-size:30px;font-weight:800;color:#0b0f19;margin:6px 0 4px;">Sign up</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.form("signup_form", clear_on_submit=False):
+        su_name = st.text_input("Email address", placeholder="you@example.com", label_visibility="collapsed")
+        su_pass = st.text_input("Password", type="password", placeholder="Choose a strong password", label_visibility="collapsed")
+        create = st.form_submit_button("Create account")
+        if create:
+            ok = register_user(su_name, su_pass)
+            if ok:
+                st.success("Account created. You can sign in now.")
+            else:
+                st.error("Sign up failed. Try a different email and non-empty password.")
+    st.markdown("<div style='text-align:center;color:#64748b;margin-top:8px;'>Already have an account?</div>", unsafe_allow_html=True)
+    if st.button("Go to Sign in"):
+        st.session_state.page = "login"
+        st.rerun()
 else:
     st.markdown("<div class='app-banner'><div class='app-title'>📘 Details</div><div class='app-sub'>Expanded information for the selected topic</div></div>", unsafe_allow_html=True)
     back = st.button("← Back to Analysis")

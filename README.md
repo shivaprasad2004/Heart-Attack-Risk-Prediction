@@ -39,6 +39,7 @@ A lightweight Streamlit application that estimates heart attack risk from retina
 - Heuristic/trained model logic: [retina_risk/model.py](file:///c:/VamshiMajorProject/retina_risk/model.py)
 - Image utilities: [retina_risk/utils.py](file:///c:/VamshiMajorProject/retina_risk/utils.py)
 - Training and validation helpers: [retina_risk/train.py](file:///c:/VamshiMajorProject/retina_risk/train.py)
+- Authentication and session management: [retina_risk/auth.py](file:///c:/VamshiMajorProject/retina_risk/auth.py)
 - Dependencies: [requirements.txt](file:///c:/VamshiMajorProject/requirements.txt)
 
 ## UI Guide
@@ -148,6 +149,7 @@ After training, start/reload the app and use the sidebar toggle to enable the tr
 
 ## Security and Privacy
 
+- **Authentication**: The application now includes a local authentication system. User credentials and sessions are stored in the `storage/` directory (ignored by git).
 - Do not upload sensitive patient data.
 - The app runs locally and does not transmit images unless the user modifies it to do so.
 

@@ -30,7 +30,7 @@ retina_risk/model.pkl
 data/
 outputs/
 reports/
+storage/
 
 # Streamlit
 .streamlit/secrets.toml
-
