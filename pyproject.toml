@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "retina-risk"
+version = "0.1.0"
+description = "Heart Attack Risk Prediction from Retinal Images"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "streamlit==1.38.0",
+    "numpy>=1.24.0",
+    "Pillow>=9.5.0",
+    "scikit-image>=0.21.0",
+    "scikit-learn>=1.3.0",
+    "requests>=2.31.0",
+    "altair",
+    "pandas"
+]
+
+[project.scripts]
+retina-risk = "retina_risk.main:run_app"
+
+[tool.setuptools.packages.find]
+include = ["retina_risk*"]
