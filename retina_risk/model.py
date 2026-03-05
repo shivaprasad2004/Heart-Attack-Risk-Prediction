@@ -28,12 +28,30 @@ def set_use_trained(use: bool):
     _USE_TRAINED = bool(use) and (_PIPELINE is not None)
 
 def _heuristic_score(stats: dict) -> float:
+    """
+    Computes a balanced risk score to avoid constant High or constant Low results.
+    """
     x1 = stats["intensity_mean"]
     x2 = stats["intensity_std"]
     x3 = stats["vesselness_mean"]
     x4 = stats["vesselness_std"]
-    z = 0.8 * (1.0 - x1) + 1.2 * x2 + 2.0 * x3 + 0.7 * x4 - 0.5
-    p = 1.0 / (1.0 + math.exp(-5.0 * z))
+    x5 = stats.get("lesion_score", 0.0)
+    
+    # Balanced weights to allow full range of scores (0-100)
+    # Vessel Component: Reduced weight to avoid over-sensitivity
+    vessel_comp = (15.0 * x3) + (5.0 * x4)
+    
+    # Lesion Component: Key differentiator for High risk, but tuned
+    lesion_comp = (8.0 * x5)
+    
+    # Contrast Component: Helps with overall image quality
+    contrast_comp = (1.5 * x2)
+    
+    # Final combined score Z with a more neutral bias
+    z = vessel_comp + lesion_comp + contrast_comp - 1.2
+    
+    # Stepped Sigmoid for better category separation
+    p = 1.0 / (1.0 + math.exp(-3.5 * z))
     return float(p * 100.0)
 
 def predict_risk(stats: dict) -> float:

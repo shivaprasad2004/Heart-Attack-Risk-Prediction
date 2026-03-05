@@ -7,7 +7,7 @@ import pandas as pd
 import altair as alt
 import os
 from retina_risk.model import predict_risk, has_trained_model, set_use_trained
-from retina_risk.utils import load_image_bytes, preprocess_image, compute_vesselness, compute_stats, overlay_vesselness
+from retina_risk.utils import load_image_bytes, preprocess_image, compute_vesselness, compute_stats, overlay_vesselness, is_valid_retinal_image
 from retina_risk.train import train_from_uploads, validate_from_uploads
 import requests
 from retina_risk.auth import authenticate_user, register_user, users_exist, ensure_storage, load_session, save_session, clear_session, seed_from_bootstrap_file
@@ -101,7 +101,14 @@ if st.session_state.page == "home":
             st.image(Image.open(io.BytesIO(b)), use_column_width=True)
         except Exception:
             st.image("https://static.streamlit.io/examples/dice.jpg", use_column_width=True)
+        
         st.markdown("<div class='card'><b>About</b><br>Retinal vasculature features are correlated with cardiovascular risk. This app visualizes vessels and computes a heuristic risk score.</div>", unsafe_allow_html=True)
+        
+        with st.expander("⚙️ Model Settings", expanded=False):
+            st.info("Adjust sensitivity if the model is too biased toward Low or High.")
+            sensitivity = st.slider("Detection Sensitivity", 0.5, 2.0, 1.0, 0.1)
+            st.session_state.sensitivity = sensitivity
+
         st.markdown("<div class='card'><b>Legend</b><br><span style='color:var(--good)'>Low</span> < 25 • <span style='color:var(--mid)'>Moderate</span> 25–50 • <span style='color:var(--accent)'>Elevated</span> 50–75 • <span style='color:var(--bad)'>High</span> ≥ 75</div>", unsafe_allow_html=True)
         if has_trained_model():
             st.toggle("Use trained model", value=st.session_state.use_trained, key="toggle_use_trained")
@@ -122,141 +129,161 @@ if st.session_state.page == "home":
     if uploaded:
         data = uploaded.read()
         img = load_image_bytes(data)
-        pre = preprocess_image(img)
-        vess = compute_vesselness(pre)
-        stats = compute_stats(pre, vess)
-        score = predict_risk(stats)
+        
+        if not is_valid_retinal_image(img):
+            st.error("❌ Invalid Image Detected: Please upload a clear retinal fundus photograph.")
+            st.info("The system checks for typical fundus characteristics like circular masks and orange/red color distributions.")
+        else:
+            pre = preprocess_image(img)
+            vess = compute_vesselness(pre)
+            stats = compute_stats(pre, vess)
+            
+            # Apply sensitivity calibration if set in sidebar
+            if "sensitivity" in st.session_state:
+                stats["intensity_std"] *= st.session_state.sensitivity
+                stats["vesselness_mean"] *= st.session_state.sensitivity
+                stats["vesselness_std"] *= st.session_state.sensitivity
+                if "lesion_score" in stats:
+                    stats["lesion_score"] *= st.session_state.sensitivity
 
-        level = "Low"
-        color = "var(--good)"
-        if score >= 75:
-            level = "High"
-            color = "var(--bad)"
-        elif score >= 50:
-            level = "Elevated"
-            color = "var(--accent)"
-        elif score >= 25:
-            level = "Moderate"
-            color = "var(--mid)"
+            # Feature debug info (visible only in terminal)
+            debug_msg = f"DEBUG: {uploaded.name} -> x1:{stats['intensity_mean']:.3f} x2:{stats['intensity_std']:.3f} x3:{stats['vesselness_mean']:.3f} x4:{stats['vesselness_std']:.3f}"
+            if "lesion_score" in stats:
+                debug_msg += f" x5:{stats['lesion_score']:.3f}"
+            print(debug_msg)
+            
+            score = predict_risk(stats)
 
-        left, right = st.columns([1.2, 1])
-        with left:
-            img_tabs = st.tabs(["Original", "Vesselness Overlay"])
-            with img_tabs[0]:
+            level = "Low"
+            color = "var(--good)"
+            if score >= 75:
+                level = "High"
+                color = "var(--bad)"
+            elif score >= 50:
+                level = "Elevated"
+                color = "var(--accent)"
+            elif score >= 25:
+                level = "Moderate"
+                color = "var(--mid)"
+
+            left, right = st.columns([1.2, 1])
+            with left:
+                img_tabs = st.tabs(["Original", "Vesselness Overlay"])
+                with img_tabs[0]:
+                    st.markdown("<div class='card'>", unsafe_allow_html=True)
+                    st.image(Image.open(io.BytesIO(data)), use_column_width=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                with img_tabs[1]:
+                    ov = overlay_vesselness(pre, vess)
+                    st.markdown("<div class='card'>", unsafe_allow_html=True)
+                    st.image(ov, use_column_width=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+            with right:
                 st.markdown("<div class='card'>", unsafe_allow_html=True)
-                st.image(Image.open(io.BytesIO(data)), use_column_width=True)
+                st.subheader("Risk Summary")
+                st.markdown(f"<div class='risk-value' style='color:{color}'>{score:.1f} / 100 <span class='risk-chip' style='background:{color}'>{level}</span></div>", unsafe_allow_html=True)
+                st.progress(min(max(score / 100.0, 0.0), 1.0))
                 st.markdown("</div>", unsafe_allow_html=True)
-            with img_tabs[1]:
-                ov = overlay_vesselness(pre, vess)
+
+            m1, m2, m3, m4 = st.columns(4)
+            with m1:
+                st.markdown("<div class='card'>Intensity mean</div>", unsafe_allow_html=True)
+                st.metric(label="", value=f"{stats['intensity_mean']:.3f}")
+            with m2:
+                st.markdown("<div class='card'>Intensity std</div>", unsafe_allow_html=True)
+                st.metric(label="", value=f"{stats['intensity_std']:.3f}")
+            with m3:
+                st.markdown("<div class='card'>Vesselness mean</div>", unsafe_allow_html=True)
+                st.metric(label="", value=f"{stats['vesselness_mean']:.3f}")
+            with m4:
+                st.markdown("<div class='card'>Vesselness std</div>", unsafe_allow_html=True)
+                st.metric(label="", value=f"{stats['vesselness_std']:.3f}")
+
+            tabs = st.tabs(["Analysis", "Report", "Details"])
+            with tabs[0]:
+                df_int = pd.DataFrame({"value": pre.flatten()})
+                df_ves = pd.DataFrame({"value": vess.flatten()})
+                chart_int = alt.Chart(df_int).mark_area(
+                    line={"color": "#e91e63"},
+                    color=alt.Gradient(
+                        gradient="linear",
+                        stops=[{"color": "#e91e63", "offset": 0}, {"color": "#00bcd4", "offset": 1}],
+                        x1=1, x2=0, y1=1, y2=0,
+                    ),
+                    opacity=0.6,
+                ).encode(
+                    alt.X("value:Q", bin=alt.Bin(maxbins=30), title="Intensity"),
+                    alt.Y("count()", title="Count"),
+                ).properties(title="Intensity Distribution", height=220)
+
+                chart_ves = alt.Chart(df_ves).mark_area(
+                    line={"color": "#00bcd4"},
+                    color=alt.Gradient(
+                        gradient="linear",
+                        stops=[{"color": "#00bcd4", "offset": 0}, {"color": "#e91e63", "offset": 1}],
+                        x1=0, x2=1, y1=0, y2=1,
+                    ),
+                    opacity=0.6,
+                ).encode(
+                    alt.X("value:Q", bin=alt.Bin(maxbins=30), title="Vesselness"),
+                    alt.Y("count()", title="Count"),
+                ).properties(title="Vesselness Distribution", height=220)
+
                 st.markdown("<div class='card'>", unsafe_allow_html=True)
-                st.image(ov, use_column_width=True)
+                st.altair_chart(chart_int, use_container_width=True)
+                st.altair_chart(chart_ves, use_container_width=True)
                 st.markdown("</div>", unsafe_allow_html=True)
-        with right:
-            st.markdown("<div class='card'>", unsafe_allow_html=True)
-            st.subheader("Risk Summary")
-            st.markdown(f"<div class='risk-value' style='color:{color}'>{score:.1f} / 100 <span class='risk-chip' style='background:{color}'>{level}</span></div>", unsafe_allow_html=True)
-            st.progress(min(max(score / 100.0, 0.0), 1.0))
-            st.markdown("</div>", unsafe_allow_html=True)
 
-        m1, m2, m3, m4 = st.columns(4)
-        with m1:
-            st.markdown("<div class='card'>Intensity mean</div>", unsafe_allow_html=True)
-            st.metric(label="", value=f"{stats['intensity_mean']:.3f}")
-        with m2:
-            st.markdown("<div class='card'>Intensity std</div>", unsafe_allow_html=True)
-            st.metric(label="", value=f"{stats['intensity_std']:.3f}")
-        with m3:
-            st.markdown("<div class='card'>Vesselness mean</div>", unsafe_allow_html=True)
-            st.metric(label="", value=f"{stats['vesselness_mean']:.3f}")
-        with m4:
-            st.markdown("<div class='card'>Vesselness std</div>", unsafe_allow_html=True)
-            st.metric(label="", value=f"{stats['vesselness_std']:.3f}")
-
-        tabs = st.tabs(["Analysis", "Report", "Details"])
-        with tabs[0]:
-            df_int = pd.DataFrame({"value": pre.flatten()})
-            df_ves = pd.DataFrame({"value": vess.flatten()})
-            chart_int = alt.Chart(df_int).mark_area(
-                line={"color": "#e91e63"},
-                color=alt.Gradient(
-                    gradient="linear",
-                    stops=[{"color": "#e91e63", "offset": 0}, {"color": "#00bcd4", "offset": 1}],
-                    x1=1, x2=0, y1=1, y2=0,
-                ),
-                opacity=0.6,
-            ).encode(
-                alt.X("value:Q", bin=alt.Bin(maxbins=30), title="Intensity"),
-                alt.Y("count()", title="Count"),
-            ).properties(title="Intensity Distribution", height=220)
-
-            chart_ves = alt.Chart(df_ves).mark_area(
-                line={"color": "#00bcd4"},
-                color=alt.Gradient(
-                    gradient="linear",
-                    stops=[{"color": "#00bcd4", "offset": 0}, {"color": "#e91e63", "offset": 1}],
-                    x1=0, x2=1, y1=0, y2=1,
-                ),
-                opacity=0.6,
-            ).encode(
-                alt.X("value:Q", bin=alt.Bin(maxbins=30), title="Vesselness"),
-                alt.Y("count()", title="Count"),
-            ).properties(title="Vesselness Distribution", height=220)
-
-            st.markdown("<div class='card'>", unsafe_allow_html=True)
-            st.altair_chart(chart_int, use_container_width=True)
-            st.altair_chart(chart_ves, use_container_width=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        report = {
-            "filename": uploaded.name,
-            "intensity_mean": stats["intensity_mean"],
-            "intensity_std": stats["intensity_std"],
-            "vesselness_mean": stats["vesselness_mean"],
-            "vesselness_std": stats["vesselness_std"],
-            "risk_score": score,
-            "risk_level": level,
-        }
-        with tabs[1]:
-            st.markdown("<div class='card'>", unsafe_allow_html=True)
-            st.subheader("Report")
-            st.json(report)
-            st.download_button("Download report (JSON)", data=json.dumps(report, indent=2), file_name="retina_risk_report.json", mime="application/json")
-            st.markdown("</div>", unsafe_allow_html=True)
-            st.markdown("<div class='card'><b>Medical accuracy</b> → <span style='color:var(--mid)'>Needs validation</span><br>Open validation to evaluate metrics on labeled data.</div>", unsafe_allow_html=True)
-            if st.button("Open validation", key="btn_report_validate"):
-                st.session_state.page = "accuracy"
-                st.rerun()
-        with tabs[2]:
-            st.markdown("<div class='card'>", unsafe_allow_html=True)
-            st.subheader("Detailed Analysis (Simple English)")
-            bright = "moderate"
-            if stats["intensity_mean"] < 0.3:
-                bright = "low (darker image)"
-            elif stats["intensity_mean"] > 0.7:
-                bright = "high (brighter image)"
-            vess_level = "moderate"
-            if stats["vesselness_mean"] < 0.1:
-                vess_level = "faint vessels"
-            elif stats["vesselness_mean"] > 0.3:
-                vess_level = "pronounced vessels"
-            vess_var = "typical variation"
-            if stats["vesselness_std"] < 0.05:
-                vess_var = "very uniform"
-            elif stats["vesselness_std"] > 0.15:
-                vess_var = "high variation"
-            simple = (
-                f"Risk score is {score:.1f}/100, which falls in the {level} range. "
-                f"The image brightness appears {bright}. "
-                f"Blood vessel visibility is {vess_level}, with {vess_var} across the image. "
-                "These patterns can reflect how clearly vessels are captured and how much they differ across regions."
-            )
-            st.write(simple)
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown("What this means:")
-            st.markdown(f"- A {level.lower()} score suggests {'lower' if level=='Low' else 'higher' if level=='High' else 'some'} likelihood of cardiovascular risk based on image features.")
-            st.markdown("- Brightness and vessel clarity can affect feature measurements; consistent lighting improves reliability.")
-            st.markdown("- This is not a medical diagnosis. For reliable medical use, validate with labeled data in the Validation page.")
-            st.markdown("</div>", unsafe_allow_html=True)
+            report = {
+                "filename": uploaded.name,
+                "intensity_mean": stats["intensity_mean"],
+                "intensity_std": stats["intensity_std"],
+                "vesselness_mean": stats["vesselness_mean"],
+                "vesselness_std": stats["vesselness_std"],
+                "risk_score": score,
+                "risk_level": level,
+            }
+            with tabs[1]:
+                st.markdown("<div class='card'>", unsafe_allow_html=True)
+                st.subheader("Report")
+                st.json(report)
+                st.download_button("Download report (JSON)", data=json.dumps(report, indent=2), file_name="retina_risk_report.json", mime="application/json")
+                st.markdown("</div>", unsafe_allow_html=True)
+                st.markdown("<div class='card'><b>Medical accuracy</b> → <span style='color:var(--mid)'>Needs validation</span><br>Open validation to evaluate metrics on labeled data.</div>", unsafe_allow_html=True)
+                if st.button("Open validation", key="btn_report_validate"):
+                    st.session_state.page = "accuracy"
+                    st.rerun()
+            with tabs[2]:
+                st.markdown("<div class='card'>", unsafe_allow_html=True)
+                st.subheader("Detailed Analysis (Simple English)")
+                bright = "moderate"
+                if stats["intensity_mean"] < 0.3:
+                    bright = "low (darker image)"
+                elif stats["intensity_mean"] > 0.7:
+                    bright = "high (brighter image)"
+                vess_level = "moderate"
+                if stats["vesselness_mean"] < 0.1:
+                    vess_level = "faint vessels"
+                elif stats["vesselness_mean"] > 0.3:
+                    vess_level = "pronounced vessels"
+                vess_var = "typical variation"
+                if stats["vesselness_std"] < 0.05:
+                    vess_var = "very uniform"
+                elif stats["vesselness_std"] > 0.15:
+                    vess_var = "high variation"
+                simple = (
+                    f"Risk score is {score:.1f}/100, which falls in the {level} range. "
+                    f"The image brightness appears {bright}. "
+                    f"Blood vessel visibility is {vess_level}, with {vess_var} across the image. "
+                    "These patterns can reflect how clearly vessels are captured and how much they differ across regions."
+                )
+                st.write(simple)
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown("What this means:")
+                st.markdown(f"- A {level.lower()} score suggests {'lower' if level=='Low' else 'higher' if level=='High' else 'some'} likelihood of cardiovascular risk based on image features.")
+                st.markdown("- Brightness and vessel clarity can affect feature measurements; consistent lighting improves reliability.")
+                st.markdown("- This is not a medical diagnosis. For reliable medical use, validate with labeled data in the Validation page.")
+                st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='card'><b>Explore More</b><br>Select a topic to see full details.</div>", unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
